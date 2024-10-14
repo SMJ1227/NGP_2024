@@ -58,6 +58,91 @@ void err_display(int errcode)
 
 #define SERVERPORT 9000
 #define BUFSIZE    512
+#define MAX_FILES 100
+int file_count = 0;
+
+// 클라이언트와 데이터 통신 처리
+DWORD WINAPI ProcessClient(LPVOID arg)
+{
+	SOCKET client_sock = (SOCKET)arg;
+	struct sockaddr_in clientaddr;
+	char addr[INET_ADDRSTRLEN];
+	int addrlen;
+	char buf[BUFSIZE + 1];
+	long int filesize;
+	long int received_bytes;
+	int retval;
+	int file_count = 0;
+	FILE* file;
+
+	// 클라이언트 정보 얻기
+	addrlen = sizeof(clientaddr);
+	getpeername(client_sock, (struct sockaddr*)&clientaddr, &addrlen);
+	inet_ntop(AF_INET, &clientaddr.sin_addr, addr, sizeof(addr));
+
+	printf("\n[TCP 서버] 클라이언트 접속: IP 주소=%s, 포트 번호=%d\n", addr, ntohs(clientaddr.sin_port));
+
+	// 클라이언트와 데이터 통신 (파일 수신)
+	while (file_count < MAX_FILES) {
+		// 데이터 받기(고정 길이 - 파일 크기)
+		retval = recv(client_sock, (char*)&filesize, sizeof(long int), MSG_WAITALL);
+		if (retval == SOCKET_ERROR) {
+			err_display("recv()");
+			break;
+		}
+		else if (retval == 0)
+			break;
+		printf("[TCP 서버] 파일 크기: %ld 바이트를 수신했습니다.\n", filesize);
+
+		// 파일 이름 생성
+		char filename[32];
+		snprintf(filename, sizeof(filename), "received_file_%d", file_count);
+		file_count++; // 파일 번호 증가
+
+		// 파일 열기
+		file = fopen(filename, "wb");
+		if (file == NULL) {
+			printf("파일을 열 수 없습니다: %s\n", filename);
+			closesocket(client_sock);
+			return 1;
+		}
+
+		// 파일 데이터 받기
+		received_bytes = 0;
+		while (received_bytes < filesize) {
+			retval = recv(client_sock, buf, BUFSIZE, 0);
+			if (retval == SOCKET_ERROR) {
+				err_display("recv()");
+				break;
+			}
+			else if (retval == 0)
+				break;
+			fwrite(buf, 1, retval, file);
+			received_bytes += retval;
+
+			// 전송률 출력
+			double percentage = ((double)received_bytes / filesize) * 100;
+			printf("\r[TCP 서버] %d 바이트를 수신했습니다. (%.2f%%)", retval, percentage);
+			fflush(stdout);
+		}
+
+		// 파일 닫기
+		fclose(file);
+		printf("\n[TCP 서버] 파일 전송 완료. 총 수신 바이트: %ld\n", received_bytes);
+
+		// 파일 개수 제한 초과 시 종료
+		if (file_count >= MAX_FILES) {
+			printf("파일 수신 한도를 초과했습니다.\n");
+			break;
+		}
+	}
+
+	// 클라이언트 소켓 닫기
+	closesocket(client_sock);
+	printf("[TCP 서버] 클라이언트 종료: IP 주소=%s, 포트 번호=%d\n", addr, ntohs(clientaddr.sin_port));
+
+	return 0;
+}
 
 int main(int argc, char* argv[])
 {
@@ -89,9 +174,7 @@ int main(int argc, char* argv[])
 	SOCKET client_sock;
 	struct sockaddr_in clientaddr;
 	int addrlen;
-	long int filesize; // 고정 길이 데이터
-	char buf[BUFSIZE + 1]; // 가변 길이 데이터
-	FILE* file;
+	HANDLE hThread;
 
 	while (1) {
 		// accept()
@@ -99,7 +182,7 @@ int main(int argc, char* argv[])
 		client_sock = accept(listen_sock, (struct sockaddr*)&clientaddr, &addrlen);
 		if (client_sock == INVALID_SOCKET) {
 			err_display("accept()");
-			break;
+			continue;
 		}
 
 		// 접속한 클라이언트 정보 출력
@@ -107,57 +190,18 @@ int main(int argc, char* argv[])
 		inet_ntop(AF_INET, &clientaddr.sin_addr, addr, sizeof(addr));
 		printf("\n[TCP 서버] 클라이언트 접속: IP 주소=%s, 포트 번호=%d\n", addr, ntohs(clientaddr.sin_port));
 
-		// 클라이언트와 데이터 통신
-		while (1) {
-			// 데이터 받기(고정 길이)
-			retval = recv(client_sock, (char*)&filesize, sizeof(long int), MSG_WAITALL);	//-- 고정 길이 데이터는 WAITALL로 전부 받을때까지 return하지 않아야함.
-			if (retval == SOCKET_ERROR) {
-				err_display("recv()");
-				break;
-			}
-			else if (retval == 0)
-				break;
-			printf("[TCP 서버] 파일 크기: %ld 바이트를 수신했습니다.\n", filesize);
-
-			// 파일 열기 (받은 파일을 저장할 파일)
-			file = fopen("received_file", "wb");
-			if (file == NULL) {
-				printf("파일을 열 수 없습니다.\n");
-				closesocket(client_sock);
-				continue;
-			}
-
-			// 파일 데이터 받기 (가변 길이)
-			long int received_bytes = 0;
-			while (received_bytes < filesize) {
-				retval = recv(client_sock, buf, BUFSIZE, 0);	//-- 가변 길이 데이터는 while로 filesize만큼 받도록 했기 때문에 WAILALL을 사용하지 않아도 괜찮음.
-				if (retval == SOCKET_ERROR) {
-					err_display("recv()");
-					break;
-				}
-				else if (retval == 0) {
-					break;
-				}
-				fwrite(buf, 1, retval, file); // 받은 데이터를 파일에 저장
-				received_bytes += retval;
-				double percentage = ((double)received_bytes / filesize) * 100;
-				printf("[TCP 서버] %d 바이트를 수신했습니다. (%.2f%%)\n", retval, percentage);
-			}
-
-			// 파일 닫기
-			fclose(file);
-			printf("[TCP 서버] 파일 전송 완료. 총 수신 바이트: %ld\n", received_bytes);
-
-			// 소켓 닫기
-			closesocket(client_sock);
-			printf("[TCP 서버] 클라이언트 종료: IP 주소=%s, 포트 번호=%d\n", addr, ntohs(clientaddr.sin_port));
-		}
-
-		// 소켓 닫기
-		closesocket(listen_sock);
-
-		// 윈속 종료
-		WSACleanup();
-		return 0;
+		// 스레드 생성
+		hThread = CreateThread(NULL, 0, ProcessClient,
+			(LPVOID)client_sock, 0, NULL);
+		if (hThread == NULL) { closesocket(client_sock); }
+		else { CloseHandle(hThread); }
 	}
+
+	// 메인 소켓 닫기
+	closesocket(listen_sock);
+
+	// 윈속 종료
+	WSACleanup();
+	return 0;
 }
+

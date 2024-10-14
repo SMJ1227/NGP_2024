@@ -66,10 +66,11 @@ int main(int argc, char* argv[])
 
 	// 명령행 인수 확인
 	if (argc < 2) {
-		printf("Usage: %s <file_name>\n", argv[0]);
+		printf("Usage: %s <file_name> <server_ip> \n", argv[0]);
 		return 1;
 	}
 	const char* filename = argv[1];
+	if (argc > 2) SERVERIP = argv[2];
 
 	// 윈속 초기화
 	WSADATA wsa;
@@ -88,7 +89,7 @@ int main(int argc, char* argv[])
 	serveraddr.sin_port = htons(SERVERPORT);
 	retval = connect(sock, (struct sockaddr*)&serveraddr, sizeof(serveraddr));
 	if (retval == SOCKET_ERROR) err_quit("connect()");
-
+	
 	// 파일 오픈
 	FILE* file = fopen(filename, "rb");
 	if (file == NULL) {
@@ -140,6 +141,18 @@ int main(int argc, char* argv[])
 
 	// 파일 닫기
 	fclose(file);
+
+	// 파일 전송 후 대기 상태
+	while (1) {
+		char user_input[BUFSIZE];
+		printf("명령어를 입력하세요 (종료하려면 'exit'): ");
+		fgets(user_input, BUFSIZE, stdin);  // 사용자 입력 받기
+
+		if (strncmp(user_input, "exit", 4) == 0) {
+			printf("프로그램을 종료합니다.\n");
+			break;
+		}
+	}
 
 	// 소켓 닫기
 	closesocket(sock);
