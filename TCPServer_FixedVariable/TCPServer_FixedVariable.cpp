@@ -72,7 +72,6 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 	long int filesize;
 	long int received_bytes;
 	int retval;
-	int file_count = 0;
 	FILE* file;
 
 	// 클라이언트 정보 얻기
