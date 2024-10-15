@@ -106,6 +106,7 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 int main(int argc, char* argv[])
 {
 	int retval;
+	int thread_id = 0;
 
 	// 윈속 초기화
 	WSADATA wsa;

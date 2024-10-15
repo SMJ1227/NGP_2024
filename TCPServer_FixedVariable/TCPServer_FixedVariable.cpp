@@ -59,6 +59,16 @@ void err_display(int errcode)
 #define SERVERPORT 9000
 #define BUFSIZE    512
 #define MAX_FILES 100
+
+#include <windows.h> // windows 관련 함수 포함
+
+void gotoxy(int x, int y) {
+	COORD coord;
+	coord.X = x;
+	coord.Y = y;
+	SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), coord);
+}
+
 int file_count = 0;
 
 // 클라이언트와 데이터 통신 처리
@@ -79,6 +89,11 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 	getpeername(client_sock, (struct sockaddr*)&clientaddr, &addrlen);
 	inet_ntop(AF_INET, &clientaddr.sin_addr, addr, sizeof(addr));
 
+	// 스레드 번호
+	static long thread_num;
+	int thread_index = InterlockedIncrement(&thread_num) - 1; // 스레드 인덱스 >> 변수를 증가시켜줌. cpu특수 명령어라 동시접근 안돼서 좋음 
+
+	gotoxy(0, (thread_index * 10));
 	printf("\n[TCP 서버] 클라이언트 접속: IP 주소=%s, 포트 번호=%d\n", addr, ntohs(clientaddr.sin_port));
 
 	// 클라이언트와 데이터 통신 (파일 수신)
@@ -91,6 +106,8 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 		}
 		else if (retval == 0)
 			break;
+
+		gotoxy(0, (thread_index * 10) + 2);
 		printf("[TCP 서버] 파일 크기: %ld 바이트를 수신했습니다.\n", filesize);
 
 		// 파일 이름 생성
@@ -121,12 +138,14 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 
 			// 전송률 출력
 			double percentage = ((double)received_bytes / filesize) * 100;
+			gotoxy(0, (thread_index * 10) + 3);
 			printf("\r[TCP 서버] %d 바이트를 수신했습니다. (%.2f%%)", retval, percentage);
 			fflush(stdout);
 		}
 
 		// 파일 닫기
 		fclose(file);
+		gotoxy(0, (thread_index * 10) + 4);
 		printf("\n[TCP 서버] 파일 전송 완료. 총 수신 바이트: %ld\n", received_bytes);
 
 		// 파일 개수 제한 초과 시 종료
@@ -138,6 +157,7 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 
 	// 클라이언트 소켓 닫기
 	closesocket(client_sock);
+	gotoxy(0, (thread_index * 10) + 6);
 	printf("[TCP 서버] 클라이언트 종료: IP 주소=%s, 포트 번호=%d\n", addr, ntohs(clientaddr.sin_port));
 
 	return 0;
@@ -187,7 +207,7 @@ int main(int argc, char* argv[])
 		// 접속한 클라이언트 정보 출력
 		char addr[INET_ADDRSTRLEN];
 		inet_ntop(AF_INET, &clientaddr.sin_addr, addr, sizeof(addr));
-		printf("\n[TCP 서버] 클라이언트 접속: IP 주소=%s, 포트 번호=%d\n", addr, ntohs(clientaddr.sin_port));
+		//printf("\n[TCP 서버] 클라이언트 접속: IP 주소=%s, 포트 번호=%d\n", addr, ntohs(clientaddr.sin_port));
 
 		// 스레드 생성
 		hThread = CreateThread(NULL, 0, ProcessClient,
