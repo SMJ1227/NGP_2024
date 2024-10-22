@@ -62,6 +62,8 @@ void err_display(int errcode)
 
 #include <windows.h> // windows 관련 함수 포함
 
+CRITICAL_SECTION cs;
+
 void gotoxy(int x, int y) {
 	COORD coord;
 	coord.X = x;
@@ -89,12 +91,14 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 	getpeername(client_sock, (struct sockaddr*)&clientaddr, &addrlen);
 	inet_ntop(AF_INET, &clientaddr.sin_addr, addr, sizeof(addr));
 
+	EnterCriticalSection(&cs);
 	// 스레드 번호
 	static long thread_num;
 	int thread_index = InterlockedIncrement(&thread_num) - 1; // 스레드 인덱스 >> 변수를 증가시켜줌. cpu특수 명령어라 동시접근 안돼서 좋음 
 
 	gotoxy(0, (thread_index * 10));
 	printf("\n[TCP 서버] 클라이언트 접속: IP 주소=%s, 포트 번호=%d\n", addr, ntohs(clientaddr.sin_port));
+	LeaveCriticalSection(&cs);
 
 	// 클라이언트와 데이터 통신 (파일 수신)
 	while (file_count < MAX_FILES) {
@@ -106,9 +110,10 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 		}
 		else if (retval == 0)
 			break;
-
+		EnterCriticalSection(&cs);
 		gotoxy(0, (thread_index * 10) + 2);
 		printf("[TCP 서버] 파일 크기: %ld 바이트를 수신했습니다.\n", filesize);
+		LeaveCriticalSection(&cs);
 
 		// 파일 이름 생성
 		char filename[32];
@@ -138,15 +143,19 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 
 			// 전송률 출력
 			double percentage = ((double)received_bytes / filesize) * 100;
+			EnterCriticalSection(&cs);
 			gotoxy(0, (thread_index * 10) + 3);
 			printf("\r[TCP 서버] %d 바이트를 수신했습니다. (%.2f%%)", retval, percentage);
 			fflush(stdout);
+			LeaveCriticalSection(&cs);
 		}
 
 		// 파일 닫기
+		EnterCriticalSection(&cs);
 		fclose(file);
 		gotoxy(0, (thread_index * 10) + 4);
 		printf("\n[TCP 서버] 파일 전송 완료. 총 수신 바이트: %ld\n", received_bytes);
+		LeaveCriticalSection(&cs);
 
 		// 파일 개수 제한 초과 시 종료
 		if (file_count >= MAX_FILES) {
@@ -156,9 +165,11 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 	}
 
 	// 클라이언트 소켓 닫기
+	EnterCriticalSection(&cs);
 	closesocket(client_sock);
 	gotoxy(0, (thread_index * 10) + 6);
 	printf("[TCP 서버] 클라이언트 종료: IP 주소=%s, 포트 번호=%d\n", addr, ntohs(clientaddr.sin_port));
+	LeaveCriticalSection(&cs);
 
 	return 0;
 }
