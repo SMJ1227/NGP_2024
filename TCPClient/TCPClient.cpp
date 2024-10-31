@@ -206,6 +206,69 @@ char* SERVERIP = (char*)"127.0.0.1";
 #define SERVERPORT 9000
 #define BUFSIZE    512
 
+DWORD WINAPI SendThread(LPVOID arg)
+{
+	SOCKET sock = *(SOCKET*)arg;
+	char buf[BUFSIZE + 1];
+	int len, retval;
+
+	while (1) {
+		// 데이터 입력
+		printf("\n[보낼 데이터] ");
+		if (fgets(buf, BUFSIZE + 1, stdin) == NULL)
+			break;
+
+		// '\n' 문자 제거
+		len = (int)strlen(buf);
+		if (buf[len - 1] == '\n')
+			buf[len - 1] = '\0';
+		if (strlen(buf) == 0)
+			continue;
+
+		// 데이터 보내기
+		retval = send(sock, buf, (int)strlen(buf), 0);
+		if (retval == SOCKET_ERROR) {
+			err_display("send()");
+			break;
+		}
+		
+		if (strcmp(buf, "exit") == 0) {
+			printf("프로그램을 종료합니다.\n");
+			closesocket(sock);  // 소켓을 닫아 RecvThread도 종료되도록 함
+			break;
+		}
+
+		printf("[TCP 클라이언트] %d바이트를 보냈습니다.\n", retval);
+	}
+
+	return 0;
+}
+
+DWORD WINAPI RecvThread(LPVOID arg)
+{
+	SOCKET sock = *(SOCKET*)arg;
+	char buf[BUFSIZE + 1];
+	int retval;
+
+	while (1) {
+		// 데이터 받기
+		retval = recv(sock, buf, BUFSIZE, 0);
+		if (retval == SOCKET_ERROR) {
+			err_display("recv()");
+			break;
+		}
+		else if (retval == 0)
+			break;
+
+		// 받은 데이터 출력
+		buf[retval] = '\0';
+		printf("[TCP 클라이언트] %d바이트를 받았습니다.\n", retval);
+		printf("[받은 데이터] %s\n", buf);
+	}
+
+	return 0;
+}
+
 int main(int argc, char* argv[])
 {
 	int retval;
@@ -231,46 +294,13 @@ int main(int argc, char* argv[])
 	retval = connect(sock, (struct sockaddr*)&serveraddr, sizeof(serveraddr));
 	if (retval == SOCKET_ERROR) err_quit("connect()");
 
-	// 데이터 통신에 사용할 변수
-	char buf[BUFSIZE + 1];
-	int len;
+	// 스레드 생성
+	HANDLE hSendThread = CreateThread(NULL, 0, SendThread, (LPVOID)&sock, 0, NULL);
+	HANDLE hRecvThread = CreateThread(NULL, 0, RecvThread, (LPVOID)&sock, 0, NULL);
 
-	// 서버와 데이터 통신
-	while (1) {
-		// 데이터 입력
-		printf("\n[보낼 데이터] ");
-		if (fgets(buf, BUFSIZE + 1, stdin) == NULL)
-			break;
-
-		// '\n' 문자 제거
-		len = (int)strlen(buf);
-		if (buf[len - 1] == '\n')
-			buf[len - 1] = '\0';
-		if (strlen(buf) == 0)
-			break;
-
-		// 데이터 보내기
-		retval = send(sock, buf, (int)strlen(buf), 0);
-		if (retval == SOCKET_ERROR) {
-			err_display("send()");
-			break;
-		}
-		printf("[TCP 클라이언트] %d바이트를 보냈습니다.\n", retval);
-
-		// 데이터 받기
-		retval = recv(sock, buf, retval, MSG_WAITALL);
-		if (retval == SOCKET_ERROR) {
-			err_display("recv()");
-			break;
-		}
-		else if (retval == 0)
-			break;
-
-		// 받은 데이터 출력
-		buf[retval] = '\0';
-		printf("[TCP 클라이언트] %d바이트를 받았습니다.\n", retval);
-		printf("[받은 데이터] %s\n", buf);
-	}
+	// 스레드가 종료될 때까지 대기
+	WaitForSingleObject(hSendThread, INFINITE);
+	WaitForSingleObject(hRecvThread, INFINITE);
 
 	// 소켓 닫기
 	closesocket(sock);
@@ -279,3 +309,4 @@ int main(int argc, char* argv[])
 	WSACleanup();
 	return 0;
 }
+

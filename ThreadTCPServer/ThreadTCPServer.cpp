@@ -58,6 +58,35 @@ void err_display(int errcode)
 
 #define SERVERPORT 9000
 #define BUFSIZE    512
+#define MAX_FILES 100
+#define MAX_CLIENTS 100
+
+#include <windows.h> // windows 관련 함수 포함
+
+CRITICAL_SECTION cs;
+SOCKET client_sockets[MAX_CLIENTS] = { 0 }; // 스레드별 클라이언트 소켓 저장
+
+void gotoxy(int x, int y) {
+	COORD coord;
+	coord.X = x;
+	coord.Y = y;
+	SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), coord);
+}
+	
+void send_to_thread(int target_thread_num, const char* msg, int len) {
+	if (target_thread_num >= 0 && target_thread_num < MAX_CLIENTS && client_sockets[target_thread_num] != 0) {
+		send(client_sockets[target_thread_num], msg, len, 0);
+	}
+}
+
+void send_to_all_clients(int sender_index, const char* msg, int len) {
+	for (int i = 0; i < MAX_CLIENTS; ++i) {
+		// sender_index는 송신한 클라이언트를 제외하기 위해 사용
+		if (i != sender_index && client_sockets[i] != 0) {
+			send(client_sockets[i], msg, len, 0);
+		}
+	}
+}
 
 // 클라이언트와 데이터 통신
 DWORD WINAPI ProcessClient(LPVOID arg)
@@ -74,6 +103,15 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 	getpeername(client_sock, (struct sockaddr*)&clientaddr, &addrlen);
 	inet_ntop(AF_INET, &clientaddr.sin_addr, addr, sizeof(addr));
 
+	EnterCriticalSection(&cs);
+	static long thread_num = 0;
+	int thread_index = InterlockedIncrement(&thread_num) - 1; // 스레드 인덱스 >> 변수를 증가시켜줌. cpu특수 명령어라 동시접근 안돼서 좋음 
+	client_sockets[thread_index] = client_sock;
+
+	gotoxy(0, (thread_index * 10));
+	printf("\n[TCP 서버] 클라이언트 접속: IP 주소=%s, 포트 번호=%d\n", addr, ntohs(clientaddr.sin_port));
+	LeaveCriticalSection(&cs);
+
 	while (1) {
 		// 데이터 받기
 		retval = recv(client_sock, buf, BUFSIZE, 0);
@@ -86,10 +124,16 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 
 		// 받은 데이터 출력
 		buf[retval] = '\0';
+		EnterCriticalSection(&cs);
+		gotoxy(0, (thread_index * 10) + 2);
 		printf("[TCP/%s:%d] %s\n", addr, ntohs(clientaddr.sin_port), buf);
+		LeaveCriticalSection(&cs);
 
 		// 데이터 보내기
-		retval = send(client_sock, buf, retval, 0);
+		//retval = send(client_sock, buf, retval, 0);
+		send_to_all_clients(thread_index, buf, retval);
+		//int target_thread_index = (thread_index == 0) ? 1 : 0; // 0번 스레드는 1번으로, 1번은 0번으로 보냄
+		//send_to_thread(target_thread_index, buf, retval);
 		if (retval == SOCKET_ERROR) {
 			err_display("send()");
 			break;
@@ -97,9 +141,12 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 	}
 
 	// 소켓 닫기
+	EnterCriticalSection(&cs);
 	closesocket(client_sock);
+	gotoxy(0, (thread_index * 10) + 3);
 	printf("[TCP 서버] 클라이언트 종료: IP 주소=%s, 포트 번호=%d\n",
 		addr, ntohs(clientaddr.sin_port));
+	LeaveCriticalSection(&cs);
 	return 0;
 }
 
@@ -135,7 +182,7 @@ int main(int argc, char* argv[])
 	struct sockaddr_in clientaddr;
 	int addrlen;
 	HANDLE hThread;
-
+	InitializeCriticalSection(&cs);
 	while (1) {
 		// accept()
 		addrlen = sizeof(clientaddr);
@@ -160,7 +207,7 @@ int main(int argc, char* argv[])
 
 	// 소켓 닫기
 	closesocket(listen_sock);
-
+	DeleteCriticalSection(&cs);
 	// 윈속 종료
 	WSACleanup();
 	return 0;
