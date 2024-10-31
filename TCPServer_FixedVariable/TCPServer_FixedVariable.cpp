@@ -91,11 +91,11 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 	getpeername(client_sock, (struct sockaddr*)&clientaddr, &addrlen);
 	inet_ntop(AF_INET, &clientaddr.sin_addr, addr, sizeof(addr));
 
-	EnterCriticalSection(&cs);
 	// 스레드 번호
 	static long thread_num;
 	int thread_index = InterlockedIncrement(&thread_num) - 1; // 스레드 인덱스 >> 변수를 증가시켜줌. cpu특수 명령어라 동시접근 안돼서 좋음 
 
+	EnterCriticalSection(&cs);
 	gotoxy(0, (thread_index * 10));
 	printf("\n[TCP 서버] 클라이언트 접속: IP 주소=%s, 포트 번호=%d\n", addr, ntohs(clientaddr.sin_port));
 	LeaveCriticalSection(&cs);
@@ -146,13 +146,13 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 			EnterCriticalSection(&cs);
 			gotoxy(0, (thread_index * 10) + 3);
 			printf("\r[TCP 서버] %d 바이트를 수신했습니다. (%.2f%%)", retval, percentage);
-			fflush(stdout);
 			LeaveCriticalSection(&cs);
+			fflush(stdout);
 		}
 
 		// 파일 닫기
-		EnterCriticalSection(&cs);
 		fclose(file);
+		EnterCriticalSection(&cs);
 		gotoxy(0, (thread_index * 10) + 4);
 		printf("\n[TCP 서버] 파일 전송 완료. 총 수신 바이트: %ld\n", received_bytes);
 		LeaveCriticalSection(&cs);
@@ -165,8 +165,8 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 	}
 
 	// 클라이언트 소켓 닫기
-	EnterCriticalSection(&cs);
 	closesocket(client_sock);
+	EnterCriticalSection(&cs);
 	gotoxy(0, (thread_index * 10) + 6);
 	printf("[TCP 서버] 클라이언트 종료: IP 주소=%s, 포트 번호=%d\n", addr, ntohs(clientaddr.sin_port));
 	LeaveCriticalSection(&cs);
@@ -177,7 +177,7 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 int main(int argc, char* argv[])
 {
 	int retval;
-
+	InitializeCriticalSection(&cs);
 	// 윈속 초기화
 	WSADATA wsa;
 	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
@@ -229,7 +229,7 @@ int main(int argc, char* argv[])
 
 	// 메인 소켓 닫기
 	closesocket(listen_sock);
-
+	DeleteCriticalSection(&cs);
 	// 윈속 종료
 	WSACleanup();
 	return 0;
