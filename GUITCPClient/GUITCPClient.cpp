@@ -57,10 +57,11 @@ void err_display(int errcode)
 /*** 2장 이후의 예제들은 Common.h를 포함하는 방식으로 이 코드를 사용한다.  ***/
 
 #include "resource.h"
+#include <commctrl.h>
 
-#define SERVERIP   "127.0.0.1"
+char* SERVERIP = (char*)"127.0.0.1";
 #define SERVERPORT 9000
-#define BUFSIZE    512
+#define BUFSIZE    50
 
 // 대화상자 프로시저
 INT_PTR CALLBACK DlgProc(HWND, UINT, WPARAM, LPARAM);
@@ -72,37 +73,10 @@ void DisplayError(const char* msg);
 DWORD WINAPI ClientMain(LPVOID arg);
 
 SOCKET sock; // 소켓
-char buf[BUFSIZE + 1]; // 데이터 송수신 버퍼
-HANDLE hReadEvent, hWriteEvent; // 이벤트
+char buf[BUFSIZE + 1];
 HWND hSendButton; // 보내기 버튼
-HWND hEdit1, hEdit2; // 에디트 컨트롤
-
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
-	LPSTR lpCmdLine, int nCmdShow)
-{
-	// 윈속 초기화
-	WSADATA wsa;
-	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
-		return 1;
-
-	// 이벤트 생성
-	hReadEvent = CreateEvent(NULL, FALSE, TRUE, NULL);
-	hWriteEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
-
-	// 소켓 통신 스레드 생성
-	CreateThread(NULL, 0, ClientMain, NULL, 0, NULL);
-
-	// 대화상자 생성
-	DialogBox(hInstance, MAKEINTRESOURCE(IDD_DIALOG1), NULL, DlgProc);
-
-	// 이벤트 제거
-	CloseHandle(hReadEvent);
-	CloseHandle(hWriteEvent);
-
-	// 윈속 종료
-	WSACleanup();
-	return 0;
-}
+HWND hEdit1, hEdit2, hProgress;
+char filename[MAX_PATH] = { 0 };
 
 // 대화상자 프로시저
 INT_PTR CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -112,17 +86,25 @@ INT_PTR CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		hEdit1 = GetDlgItem(hDlg, IDC_EDIT1);
 		hEdit2 = GetDlgItem(hDlg, IDC_EDIT2);
 		hSendButton = GetDlgItem(hDlg, IDOK);
+		hProgress = GetDlgItem(hDlg, IDC_PROGRESS1);
 		SendMessage(hEdit1, EM_SETLIMITTEXT, BUFSIZE, 0);
+		SendMessage(hProgress, PBM_SETRANGE, 0, MAKELPARAM(0, 100)); // 0 ~ 100%
+		SendMessage(hProgress, PBM_SETPOS, 0, 0); // 시작 위치 0%
 		return TRUE;
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
 		case IDOK:
-			EnableWindow(hSendButton, FALSE); // 보내기 버튼 비활성화
-			WaitForSingleObject(hReadEvent, INFINITE); // 읽기 완료 대기
 			GetDlgItemTextA(hDlg, IDC_EDIT1, buf, BUFSIZE + 1);
-			SetEvent(hWriteEvent); // 쓰기 완료 알림
-			SetFocus(hEdit1); // 키보드 포커스 전환
-			SendMessage(hEdit1, EM_SETSEL, 0, -1); // 텍스트 전체 선택
+			DisplayText("%s\r\n", buf);
+			if (strncmp(buf, "exit", 4) == 0) {
+				EnableWindow(hSendButton, TRUE);
+				EndDialog(hDlg, IDCANCEL);
+				closesocket(sock);
+			}
+			else {
+				SetFocus(hEdit1);
+				SendMessage(hEdit1, EM_SETSEL, 0, -1);
+			}
 			return TRUE;
 		case IDCANCEL:
 			EndDialog(hDlg, IDCANCEL); // 대화상자 닫기
@@ -133,7 +115,6 @@ INT_PTR CALLBACK DlgProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	}
 	return FALSE;
 }
-
 // 에디트 컨트롤 출력 함수
 void DisplayText(const char* fmt, ...) {
 	va_list arg;
@@ -146,12 +127,7 @@ void DisplayText(const char* fmt, ...) {
 	SendMessage(hEdit2, EM_SETSEL, nLength, nLength);
 	SendMessageA(hEdit2, EM_REPLACESEL, FALSE, (LPARAM)cbuf);
 
-	// 현재 텍스트 라인 수 가져오기
-	int lineCount = SendMessage(hEdit2, EM_GETLINECOUNT, 0, 0);
-	// 마지막 라인으로 스크롤
-	SendMessage(hEdit2, EM_LINESCROLL, 0, lineCount);
 }
-
 // 소켓 함수 오류 출력
 void DisplayError(const char* msg)
 {
@@ -165,60 +141,105 @@ void DisplayError(const char* msg)
 	LocalFree(lpMsgBuf);
 }
 
-// TCP 클라이언트 시작 부분
-DWORD WINAPI ClientMain(LPVOID arg)
-{
+DWORD WINAPI ClientMain(LPVOID arg) {
 	int retval;
 
 	// 소켓 생성
-	sock = socket(AF_INET, SOCK_STREAM, 0);
+	SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
 	if (sock == INVALID_SOCKET) err_quit("socket()");
 
-	// connect()
+	// 서버 연결 설정
 	struct sockaddr_in serveraddr;
 	memset(&serveraddr, 0, sizeof(serveraddr));
 	serveraddr.sin_family = AF_INET;
-	serveraddr.sin_addr.s_addr = inet_addr(SERVERIP);
+	inet_pton(AF_INET, SERVERIP, &serveraddr.sin_addr);
 	serveraddr.sin_port = htons(SERVERPORT);
 	retval = connect(sock, (struct sockaddr*)&serveraddr, sizeof(serveraddr));
 	if (retval == SOCKET_ERROR) err_quit("connect()");
 
-	// 서버와 데이터 통신
-	while (1) {
-		WaitForSingleObject(hWriteEvent, INFINITE); // 쓰기 완료 대기
-
-		// 문자열 길이가 0이면 보내지 않음
-		if (strlen(buf) == 0) {
-			EnableWindow(hSendButton, TRUE); // 보내기 버튼 활성화
-			SetEvent(hReadEvent); // 읽기 완료 알림
-			continue;
-		}
-
-		// 데이터 보내기
-		retval = send(sock, buf, (int)strlen(buf), 0);
-		if (retval == SOCKET_ERROR) {
-			DisplayError("send()");
-			break;
-		}
-		DisplayText("[TCP 클라이언트] %d바이트를 보냈습니다.", retval);
-
-		// 데이터 받기
-		retval = recv(sock, buf, retval, MSG_WAITALL);
-		if (retval == SOCKET_ERROR) {
-			DisplayError("recv()");
-			break;
-		}
-		else if (retval == 0)
-			break;
-
-		// 받은 데이터 출력
-		buf[retval] = '\0';
-		DisplayText("[TCP 클라이언트] %d바이트를 받았습니다.\r\n", retval);
-		DisplayText("[받은 데이터] %s\r\n", buf);
-
-		EnableWindow(hSendButton, TRUE); // 보내기 버튼 활성화
-		SetEvent(hReadEvent); // 읽기 완료 알림
+	// 파일 오픈
+	FILE* file = fopen(filename, "rb");
+	if (file == NULL) {
+		MessageBoxA(NULL, "파일을 열 수 없습니다.", "오류", MB_ICONERROR);
+		closesocket(sock);
+		WSACleanup();
+		return 1;
 	}
 
+	// 파일 크기 전송
+	fseek(file, 0, SEEK_END);
+	long int filesize = ftell(file);
+	fseek(file, 0, SEEK_SET);
+	retval = send(sock, (char*)&filesize, sizeof(long int), 0);
+	if (retval == SOCKET_ERROR) {
+		err_display("send()");
+		fclose(file);
+		closesocket(sock);
+		WSACleanup();
+		return 1;
+	}
+
+	// 파일 데이터 전송
+	char buf[BUFSIZE];
+	size_t len;
+	long int total_sent = 0;
+	DisplayText("전송 중입니다... \r\n");
+	while ((len = fread(buf, 1, BUFSIZE, file)) > 0) {
+		retval = send(sock, buf, (int)len, 0);
+		if (retval == SOCKET_ERROR) {
+			err_display("send()");
+			break;
+		}
+		total_sent += retval;
+		int progress = (int)((total_sent * 100) / filesize);
+		SendMessage(hProgress, PBM_SETPOS, progress, 0); // 프로그래스 바 위치 설정
+	}
+
+	// 파일 닫기
+	fclose(file);
+
+	DisplayText("\r\n파일 전송 완료. 명령어를 입력하세요: \r\n");
+
+	closesocket(sock);
+	WSACleanup();
+	return 0;
+}
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
+	LPSTR lpCmdLine, int nCmdShow)
+{
+	// 명령줄 인수 파싱
+	char* token = strtok(lpCmdLine, " ");
+	if (token != NULL) strcpy(filename, token);
+	token = strtok(NULL, " ");
+	if (token != NULL) strncpy(SERVERIP, token, sizeof(SERVERIP) - 1);
+
+	// 파일 이름 유효성 검사
+	if (strlen(filename) == 0) {
+		MessageBoxA(NULL, "파일 이름을 제공해야 합니다.", "오류", MB_ICONERROR);
+		return 1;
+	}
+
+	// 윈속 초기화
+	WSADATA wsa;
+	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+		return 1;
+
+	HANDLE hClientThread = CreateThread(NULL, 0, ClientMain, NULL, 0, NULL);
+	if (hClientThread == NULL) {
+		MessageBoxA(NULL, "ClientMain 스레드 생성 실패", "오류", MB_ICONERROR);
+		WSACleanup();
+		return 1;
+	}
+
+	// 대화상자 실행
+	DialogBox(hInstance, MAKEINTRESOURCE(IDD_DIALOG1), NULL, DlgProc);
+
+	// 소켓 통신 스레드 종료 대기
+	WaitForSingleObject(hClientThread, INFINITE);
+
+	// 스레드 핸들 닫기 및 윈속 종료
+	CloseHandle(hClientThread);
+	WSACleanup();
 	return 0;
 }
