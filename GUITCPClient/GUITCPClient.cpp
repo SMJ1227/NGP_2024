@@ -59,7 +59,7 @@ void err_display(int errcode)
 #include "resource.h"
 #include <commctrl.h>
 
-char* SERVERIP = (char*)"127.0.0.1";
+char SERVERIP[16] = "127.0.0.1";
 #define SERVERPORT 9000
 #define BUFSIZE    50
 
