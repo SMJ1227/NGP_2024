@@ -15,7 +15,7 @@
 
 // 소켓 함수 오류 출력 후 종료
 void err_quit(const char* msg)
-{
+{	
 	LPVOID lpMsgBuf;
 	FormatMessageA(
 		FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
